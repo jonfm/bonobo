@@ -2,19 +2,7 @@ use MooseX::Declare;
 
 class Bonobo::Scraper {
 
-#    has [qw/
-#        find_posting_urls
-#        find_category
-#        find_location
-#        find_title
-#        find_blurb
-#        find_attribution
-#    /] => (
-#        is         => 'ro',
-#        isa        => 'CodeRef',
-#        required   => 1,
-#        lazy_build => 1,
-#    );
+    use Data::Dumper;
     use Digest::SHA;
     use LWP::UserAgent;
     my $ua = LWP::UserAgent->new();
@@ -24,13 +12,15 @@ class Bonobo::Scraper {
     has loc      => ( is => 'ro', isa => 'Str', required => 1 );
     has prefix   => ( is => 'ro', isa => 'Str', lazy_build => 1 );
     has url      => ( is => 'ro', isa => 'Str' );
-
+    has ad_urls  => ( is => 'ro', isa => 'ArrayRef', lazy_build => 1 );
+    has ads      => ( is => 'ro', isa => 'ArrayRef[Bonobo::Ad]', lazy_build => 1 );
 
     method scrape {
-        print "scraping stuff here\n";
+        $self->fetch_listing;
+        $_->to_db for ( @{ $self->ads } );
     }
 
-    method pull_page_to_disk {
+    method fetch_listing {
         my $response = $ua->get( $self->url );
         if ( $response->is_success ) {
             mkdir $self->dirname unless -d $self->dirname;
@@ -61,6 +51,30 @@ class Bonobo::Scraper {
 
     method dirname {
         return $self->data_dir . '/' . join "_", $self->prefix, $self->loc, $self->cat;
+    }
+
+    method base_url {
+        my ($domain) = $self->url =~ m|^(http[s]*\://[^/]+)|;
+        return $domain;
+    }
+
+    method _build_ads {
+        my @ads;
+        for my $url ( @{ $self->ad_urls } ) {
+            $url = $self->base_url . $url;
+            my $response = $ua->get( $url );
+            if ( $response->is_success ) {
+                my $content = $response->decoded_content;
+                my $filename = $self->filename( $content ) . ".ad.html";
+                open FH, ">", $filename;
+                binmode FH, ":utf8";
+                print FH $content;
+                push @ads, $self->_new_ad( $filename, $url );
+            } else {
+                warn "failed to fetch from: $url";
+            }
+        }
+        return \@ads;
     }
 
     method _build_prefix { 'BASECLASS' }
